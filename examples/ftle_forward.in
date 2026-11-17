@@ -1,0 +1,245 @@
+################################# flowVC INPUT FILE #####################################
+#
+# Forward-time FTLE on an unstructured (SimVascular / svMultiPhysics) tet mesh.
+#
+# Fill in every value set to EDIT
+#
+# flowVC reads parameters by POSITION, not by name: keep the order, and never
+# put a comment on the same line as a value.
+#
+#######################################################################################
+
+# Path_Data: Directory containing velocity data files.  [EDIT]
+Path_Data = /path/to/flowvc_data/
+
+# Path_Output: Directory where output files are written.  [EDIT]
+Path_Output = /path/to/output/
+
+# Dimensions: 2D or 3D velocity data.
+Dimensions = 3
+
+# Data_MeshType: Velocity mesh type. 0 = Cartesian, 1 = unstructured.
+Data_MeshType = 1
+
+# Data_InFilePrefix: prefix for input velocity files.  [EDIT]
+Data_InFilePrefix = EDIT
+
+# Data_SuffixTMin: Suffix of the first velocity file.  [EDIT]
+Data_SuffixTMin = EDIT
+
+# Data_SuffixTDelta: Increment between successive velocity files.  [EDIT]
+Data_SuffixTDelta = EDIT
+
+# Data_TRes: Number of velocity frames.  [EDIT]
+Data_TRes = EDIT
+
+# Data_TDelta: Time spacing between successive velocity files.  [EDIT]
+Data_TDelta = EDIT
+
+# Data_TMin: Time assigned to the first velocity file.  [EDIT]
+Data_TMin = EDIT
+
+# Data_TPeriodic: Whether velocity data is periodic in time. 0 = no, 1 = yes.
+Data_TPeriodic = 0
+
+# Data_XPeriodic: Spatial periodicity. Must be 0 for unstructured meshes.
+Data_XPeriodic = 0
+
+# Data_MeshBounds: Bounding box of velocity data.  [EDIT]
+Data_MeshBounds.XMin = EDIT
+Data_MeshBounds.XMax = EDIT
+Data_MeshBounds.YMin = EDIT
+Data_MeshBounds.YMax = EDIT
+Data_MeshBounds.ZMin = EDIT
+Data_MeshBounds.ZMax = EDIT
+
+# Fluid_Density: Fluid density. UNUSED (Particle_Radius = 0).
+Fluid_Density = 1.06
+
+# Fluid_Viscosity: Fluid viscosity. UNUSED (Particle_Radius = 0).
+Fluid_Viscosity = 0.04
+
+# Output_TStart: Start time for simulation and output.  [EDIT]
+Output_TStart = EDIT
+
+# Output_TRes: Number of output times.
+Output_TRes = 1
+
+# Output_TDelta: Time between successive outputs. UNUSED (Output_TRes = 1).
+# Set Output_TRes > 1 and this value to compute several FTLE fields (e.g. one per frame).
+Output_TDelta = 0.041095
+
+# Int_Type: Integration routine. 0 = Euler, 1 = RK4, 2 = RKF.
+Int_Type = 1
+
+# Int_TimeStep: Integration time step. Used for Int_Type = 0 or 1.
+# Should be well below Data_TDelta; halve it and re-run to check FTLE does not change.
+Int_TimeStep = 0.0002
+
+# Int_Accuracy: Absolute error tolerance for RKF. UNUSED (Int_Type = 1).
+Int_Accuracy = 0.001
+
+# Int_MinTimeStep: Minimum RKF time step. UNUSED (Int_Type = 1).
+Int_MinTimeStep = 0.00001
+
+# Int_MaxTimeStep: Maximum RKF time step. UNUSED (Int_Type = 1).
+Int_MaxTimeStep = 0.1
+
+# Int_TimeDirection: 1 = forward in time, -1 = backward in time.
+Int_TimeDirection = 1
+
+# Int_NormalFlow: Impose inward flow on no-slip boundaries. 0 = no, 1 = yes.
+Int_NormalFlow = 0
+
+# Int_NormalFlowScaling: Inward boundary velocity scaling. UNUSED (Int_NormalFlow = 0).
+Int_NormalFlowScaling = 1.0
+
+# Int_Extrapolate: Behavior outside the data domain. 0 = stop, 1 = exit-velocity, 2 = linear.
+Int_Extrapolate = 0
+
+# Particle_Radius: Particle radius. 0 = massless tracers.
+Particle_Radius = 0.0
+
+# Particle_Density: Particle mass density. UNUSED (Particle_Radius = 0).
+Particle_Density = 1.0
+
+# Particle_ICType: Particle initial velocity. UNUSED (Particle_Radius = 0).
+Particle_ICType = 1
+
+# Gravity_Vector: Gravity components. UNUSED (Particle_Radius = 0).
+Gravity_Vector[0] = 0.0
+Gravity_Vector[1] = 0.0
+Gravity_Vector[2] = 0.0
+
+# LocalSearchChecking: Element search. 0 = local only, 1 = global check on local failures.
+LocalSearchChecking = 0
+
+# FTLE_Compute: Compute FTLE fields. 0 = no, 1 = yes (Trace_Compute must be 0).
+FTLE_Compute = 1
+
+# FTLE_GenerateMesh: 0 = read FTLE mesh from FTLE_ICFile, 1 = generate Cartesian mesh.
+FTLE_GenerateMesh = 0
+
+# FTLE_ICFile: File storing FTLE mesh information.  [EDIT]
+FTLE_ICFile = EDIT
+
+# FTLE_MeshBounds: FTLE mesh bounds and resolution. Must match the IC file.  [EDIT]
+FTLE_MeshBounds.XMin = EDIT
+FTLE_MeshBounds.XMax = EDIT
+FTLE_MeshBounds.YMin = EDIT
+FTLE_MeshBounds.YMax = EDIT
+FTLE_MeshBounds.ZMin = EDIT
+FTLE_MeshBounds.ZMax = EDIT
+FTLE_MeshBounds.XRes = EDIT
+FTLE_MeshBounds.YRes = EDIT
+FTLE_MeshBounds.ZRes = EDIT
+
+# FTLE_IntTLength: Integration time used to compute FTLE.  [EDIT]
+# Output_TStart +/- FTLE_IntTLength must stay inside the velocity data unless Data_TPeriodic = 1.
+FTLE_IntTLength = EDIT
+
+# FTLE_ComputeVariation: Compute FTLE vs integration time. 0 = no, 1 = yes.
+FTLE_ComputeVariation = 0
+
+# FTLE_VariationOutFreq: FTLE output frequency during variation. UNUSED (FTLE_ComputeVariation = 0).
+FTLE_VariationOutFreq = 1
+
+# FTLE_OutFilePrefix: Filename prefix for FTLE output.  [EDIT]
+FTLE_OutFilePrefix = forwardFTLE
+
+# Trace_Compute: Compute tracer trajectories. 0 = no, 1 = yes (FTLE_Compute must be 0).
+Trace_Compute = 0
+
+# Trace_ReleaseStrategy: Tracer release. 0 = normal, 1 = staggered. UNUSED (Trace_Compute = 0).
+Trace_ReleaseStrategy = 0
+
+# Trace_ReleaseTMax: Max time for staggered release. UNUSED (Trace_Compute = 0).
+Trace_ReleaseTMax = 0.0
+
+# Trace_GenerateMesh: 0 = read tracers from file, 1 = generate Cartesian grid. UNUSED (Trace_Compute = 0).
+Trace_GenerateMesh = 1
+
+# Trace_InFile: File of tracer initial positions. UNUSED (Trace_Compute = 0).
+Trace_InFile = tracer_grid.bin
+
+# Trace_MultipleInFiles: Multiple tracer input files. UNUSED (Trace_Compute = 0).
+Trace_MultipleInFiles = 0
+
+# Trace_InFileFormat: Format of Trace_InFile. UNUSED (Trace_Compute = 0).
+Trace_InFileFormat = 4
+
+# Trace_OutFilePrefix: Prefix for tracer position output. UNUSED (Trace_Compute = 0).
+Trace_OutFilePrefix = tracer-positions
+
+# Trace_NumLaunchTimes: Number of tracer release times. UNUSED (Trace_Compute = 0).
+Trace_NumLaunchTimes = 1
+
+# Trace_LaunchTimeSpacing: Spacing between tracer releases. UNUSED (Trace_Compute = 0).
+Trace_LaunchTimeSpacing = 0.1
+
+# Trace_IntTLength: Tracer integration time. UNUSED (Trace_Compute = 0).
+Trace_IntTLength = 100
+
+# Trace_AlwaysOutput: Always write tracer positions. UNUSED (Trace_Compute = 0).
+Trace_AlwaysOutput = 0
+
+# Trace_MeshBounds: Cartesian tracer mesh. UNUSED (Trace_Compute = 0).
+Trace_MeshBounds.XMin = 0.0
+Trace_MeshBounds.XMax = 2.0
+Trace_MeshBounds.YMin = 0.0
+Trace_MeshBounds.YMax = 0.1
+Trace_MeshBounds.ZMin = 0.0
+Trace_MeshBounds.ZMax = 0.0
+Trace_MeshBounds.XRes = 201
+Trace_MeshBounds.YRes = 101
+Trace_MeshBounds.ZRes = 1
+
+# Trace_VorticityCompute: Compute tracer vorticity. UNUSED (Trace_Compute = 0).
+Trace_VorticityCompute = 0
+
+# Trace_APCompute: Compute activation potential. UNUSED (Trace_Compute = 0).
+Trace_APCompute = 0
+
+# Trace_CETCompute: Compute cumulative exposure time. UNUSED (Trace_Compute = 0).
+Trace_CETCompute = 0
+
+# Trace_CETAuxillaryMesh: Use auxiliary mesh for CET. UNUSED (Trace_Compute = 0).
+Trace_CETAuxillaryMesh = 0
+
+# Trace_CETMeshPrefix: Prefix for CET mesh files. UNUSED (Trace_Compute = 0).
+Trace_CETMeshPrefix = none
+
+# Trace_CETSubsteps: CET substeps. UNUSED (Trace_Compute = 0).
+Trace_CETSubsteps = 2
+
+# Trace_RTCompute: Compute residence time. UNUSED (Trace_Compute = 0).
+Trace_RTCompute = 0
+
+# Trace_RTOutFilePrefix: Prefix for residence-time output. UNUSED (Trace_Compute = 0).
+Trace_RTOutFilePrefix = none
+
+# VelOut_Compute: Generate interpolated velocity fields. 0 = no, 1 = yes.
+VelOut_Compute = 0
+
+# VelOut_GenerateMesh: Generate interpolation mesh. UNUSED (VelOut_Compute = 0).
+VelOut_GenerateMesh = 1
+
+# VelOut_InFile: File of interpolation point locations. UNUSED (VelOut_Compute = 0).
+VelOut_InFile = interpolation-positions.vtk
+
+# VelOut_InFileFormat: Format of VelOut_InFile. UNUSED (VelOut_Compute = 0).
+VelOut_InFileFormat = 1
+
+# VelOut_FilePrefix: Prefix for interpolated velocity output. UNUSED (VelOut_Compute = 0).
+VelOut_FilePrefix = interpolated
+
+# VelOut_MeshBounds: Interpolation mesh bounds and resolution. UNUSED (VelOut_Compute = 0).
+VelOut_MeshBounds.XMin = 0.0
+VelOut_MeshBounds.XMax = 2.0
+VelOut_MeshBounds.YMin = 0.0
+VelOut_MeshBounds.YMax = 1.0
+VelOut_MeshBounds.ZMin = 0.0
+VelOut_MeshBounds.ZMax = 0.0
+VelOut_MeshBounds.XRes = 21
+VelOut_MeshBounds.YRes = 11
+VelOut_MeshBounds.ZRes = 1

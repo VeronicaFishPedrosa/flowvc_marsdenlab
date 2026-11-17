@@ -1,0 +1,747 @@
+/*
+ *  velocity.c
+ *  flowVC
+ *
+ *  Created by Shawn Shadden.
+ *  Copyright 2010 Flow Physics Group. All rights reserved.
+ *
+ */
+
+#include <math.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "globals.h"
+#include "io.h"
+#include "macros.h"
+#include "memory.h"
+#include "structs.h"
+#include "velocity.h"
+
+
+void AllocateVelFieldData(void) {
+    /*
+     *	Allocates memory for velocity field data for 2 time frames (moving buffer of data)
+     */
+    
+    printf("\n  Allocating memory for velocity data...");
+    if (Data_MeshType == CARTESIAN) {
+        Vel_CartVelArray_U = Calloc4D(Vel_CartVelArray_U, 2, Vel_CartMesh.XRes, Vel_CartMesh.YRes, Vel_CartMesh.ZRes);
+        Vel_CartVelArray_V = Calloc4D(Vel_CartVelArray_V, 2, Vel_CartMesh.XRes, Vel_CartMesh.YRes, Vel_CartMesh.ZRes);
+        Vel_CartVelArray_W = Calloc4D(Vel_CartVelArray_W, 2, Vel_CartMesh.XRes, Vel_CartMesh.YRes, Vel_CartMesh.ZRes);
+    }
+    else {
+        Vel_UnstructVelArray_U = Calloc2D(Vel_UnstructVelArray_U, 2, Vel_MeshNumNodes);
+        Vel_UnstructVelArray_V = Calloc2D(Vel_UnstructVelArray_V, 2, Vel_MeshNumNodes);
+        Vel_UnstructVelArray_W = Calloc2D(Vel_UnstructVelArray_W, 2, Vel_MeshNumNodes);
+    }
+    printf("OK!\n");
+    
+}
+
+
+void FreeVelFieldData(void) {
+    /*
+     *	Deallocates memory for velocity field data for 2 time frames (moving buffer of data)
+     */
+    
+    if (Data_MeshType == CARTESIAN) {
+        Free4D(Vel_CartVelArray_U, 2, Vel_CartMesh.XRes, Vel_CartMesh.YRes);
+        Free4D(Vel_CartVelArray_V, 2, Vel_CartMesh.XRes, Vel_CartMesh.YRes);
+        Free4D(Vel_CartVelArray_W, 2, Vel_CartMesh.XRes, Vel_CartMesh.YRes);
+    }
+    else {
+        Free2D(Vel_UnstructVelArray_U, 2);
+        Free2D(Vel_UnstructVelArray_V, 2);
+        Free2D(Vel_UnstructVelArray_W, 2);
+    }
+}
+
+
+
+
+void LoadCartVelDataFrame(int frame) {
+    
+    int i, j, k, ModVal, slot1, slot2;
+    double timestamp;
+    char Data_BinFilePath[LONGSTRING];
+    FILE *Data_BinFileID;
+    
+    if(Int_TimeDirection > 0) {
+        slot1 = 0;
+        slot2 = 1;
+    }
+    else {
+        slot1 = 1;
+        slot2 = 0;
+    }
+    
+    /* Frame index -> file index.
+     *
+     * The wraparound below is only correct for a time-periodic dataset, where
+     * frame Data_TRes-1 and frame 0 are the same instant. Applying it
+     * unconditionally (as this code did originally) means that for a
+     * non-periodic dataset, requesting frame Data_TRes-1 computes
+     * fmod(Data_TRes-1, Data_TRes-1) == 0 and silently loads frame 0's file
+     * instead -- no error, just a discontinuous velocity field spliced in.
+     *
+     * main.c's loop (`for(df = Data_FirstFrame; df != Data_LastFrame; ...)`,
+     * loading df + Int_TimeDirection) requests exactly Data_LastFrame as its
+     * highest frame, so any run with Data_LastFrame == Data_TRes-1 hit this.
+     * That is the default for this project's data, and it corrupted the last
+     * ~5% of the integration window in the July 31 median-resolution run.
+     *
+     * Guarding on Data_TPeriodic leaves periodic behavior bit-identical and
+     * follows the precedent already set in strainrate.c:88, where the author
+     * does test !Data_TPeriodic before touching frame indices. */
+    if(Data_TPeriodic) {
+        ModVal = fmod(frame, Data_TRes - 1);
+        if(ModVal < 0) {
+            ModVal += Data_TRes - 1;
+        }
+    }
+    else {
+        if(frame < 0 || frame > Data_TRes - 1)
+            FatalError("Requested velocity frame %d outside available data [0, %d] (Data_TPeriodic = 0)",
+                       frame, Data_TRes - 1);
+        ModVal = frame;
+    }
+
+    if(Vel_CartVelArray_U == NULL || Vel_CartVelArray_V == NULL || Vel_CartVelArray_W == NULL)
+        AllocateVelFieldData();
+    
+    /* Swap slot pointers in O(1) instead of iterating over all (i,j) pairs */
+    {
+        double ***tmp;
+        tmp = Vel_CartVelArray_U[slot1]; Vel_CartVelArray_U[slot1] = Vel_CartVelArray_U[slot2]; Vel_CartVelArray_U[slot2] = tmp;
+        tmp = Vel_CartVelArray_V[slot1]; Vel_CartVelArray_V[slot1] = Vel_CartVelArray_V[slot2]; Vel_CartVelArray_V[slot2] = tmp;
+        tmp = Vel_CartVelArray_W[slot1]; Vel_CartVelArray_W[slot1] = Vel_CartVelArray_W[slot2]; Vel_CartVelArray_W[slot2] = tmp;
+    }
+    
+    /*** Read in new time slice of data ***/
+    /* Open file */
+    sprintf(Data_BinFilePath, "%s%s_vel.%d.bin", Path_Data, Data_InFilePrefix, Data_SuffixTMin + ModVal * Data_SuffixTDelta);
+    if((Data_BinFileID = fopen(Data_BinFilePath, "rb")) == NULL)
+        FatalError("Could not open file %s", Data_BinFilePath);
+    /* Read time stamp */
+    if(fread(&timestamp, sizeof(double), 1, Data_BinFileID) < 1)
+        FatalError("Could not read time stamp from file %s", Data_BinFilePath);
+    printf("\nLoading velocity data from %s (time stamp = %g)...", Data_BinFilePath, timestamp);
+    fflush(stdout);
+    /* Read velocity data using bulk row reads: one row of XRes (U,V,W) triples per iteration */
+    {
+        double *rowbuf;
+        if((rowbuf = (double *)malloc(Vel_CartMesh.XRes * 3 * sizeof(double))) == NULL)
+            FatalError("Malloc failed for rowbuf in LoadCartVelDataFrame");
+        for(k = 0; k < Vel_CartMesh.ZRes; k++) {
+            for(j = 0; j < Vel_CartMesh.YRes; j++) {
+                if((int)fread(rowbuf, sizeof(double), Vel_CartMesh.XRes * 3, Data_BinFileID) < Vel_CartMesh.XRes * 3)
+                    FatalError("Could not load velocity row k=%d j=%d from %s", k, j, Data_BinFilePath);
+                for(i = 0; i < Vel_CartMesh.XRes; i++) {
+                    Vel_CartVelArray_U[slot2][i][j][k] = rowbuf[i * 3    ];
+                    Vel_CartVelArray_V[slot2][i][j][k] = rowbuf[i * 3 + 1];
+                    Vel_CartVelArray_W[slot2][i][j][k] = rowbuf[i * 3 + 2];
+                }
+            }
+        }
+        free(rowbuf);
+    }
+    /* Close file */
+    fclose(Data_BinFileID);
+    
+    printf("OK!\n");
+    fflush(stdout);
+    
+}
+
+/* CHANGE:
+ * Node velocities are fread in chunks of 65536 nodes (~1.5 MB) instead of
+ * one (U,V,W) triple per call.
+ */
+void LoadUnstructVelDataFrame(int frame) {
+    
+    int i, ModVal, slot1, slot2;
+    double *tempptr_U, *tempptr_V, *tempptr_W, timestamp;
+    char Data_BinFilePath[LONGSTRING];
+    FILE *Data_BinFileID;
+    
+    if(Int_TimeDirection > 0) {
+        slot1 = 0;
+        slot2 = 1;
+    }
+    else {
+        slot1 = 1;
+        slot2 = 0;
+    }
+    
+    /* Frame index -> file index.
+     *
+     * The wraparound below is only correct for a time-periodic dataset, where
+     * frame Data_TRes-1 and frame 0 are the same instant. Applying it
+     * unconditionally (as this code did originally) means that for a
+     * non-periodic dataset, requesting frame Data_TRes-1 computes
+     * fmod(Data_TRes-1, Data_TRes-1) == 0 and silently loads frame 0's file
+     * instead -- no error, just a discontinuous velocity field spliced in.
+     *
+     * main.c's loop (`for(df = Data_FirstFrame; df != Data_LastFrame; ...)`,
+     * loading df + Int_TimeDirection) requests exactly Data_LastFrame as its
+     * highest frame, so any run with Data_LastFrame == Data_TRes-1 hit this.
+     * That is the default for this project's data, and it corrupted the last
+     * ~5% of the integration window in the July 31 median-resolution run.
+     *
+     * Guarding on Data_TPeriodic leaves periodic behavior bit-identical and
+     * follows the precedent already set in strainrate.c:88, where the author
+     * does test !Data_TPeriodic before touching frame indices. */
+    if(Data_TPeriodic) {
+        ModVal = fmod(frame, Data_TRes - 1);
+        if(ModVal < 0) {
+            ModVal += Data_TRes - 1;
+        }
+    }
+    else {
+        if(frame < 0 || frame > Data_TRes - 1)
+            FatalError("Requested velocity frame %d outside available data [0, %d] (Data_TPeriodic = 0)",
+                       frame, Data_TRes - 1);
+        ModVal = frame;
+    }
+
+    /* Allocate memory for velocity data if needed */
+    if(Vel_UnstructVelArray_U == NULL || Vel_UnstructVelArray_V == NULL || Vel_UnstructVelArray_W == NULL)
+        AllocateVelFieldData();
+    
+    /* Open binary velocity file for reading */
+    sprintf(Data_BinFilePath, "%s%s_vel.%d.bin", Path_Data, Data_InFilePrefix, Data_SuffixTMin + ModVal * Data_SuffixTDelta);
+    if((Data_BinFileID = fopen(Data_BinFilePath, "rb")) == NULL)
+        FatalError("Could not open file %s", Data_BinFilePath);
+    
+    /* Read time stamp */
+    if(fread(&timestamp, sizeof(double), 1, Data_BinFileID) < 1)
+        FatalError("Could not read time stamp from file %s", Data_BinFilePath);
+    
+    printf("\nLoading velocity data from %s_vel.%d.bin (time stamp = %g)...", Data_InFilePrefix, Data_SuffixTMin + ModVal * Data_SuffixTDelta, timestamp);
+    fflush(stdout);
+    
+    /* Virtual data shift */
+    tempptr_U = Vel_UnstructVelArray_U[slot1];
+    tempptr_V = Vel_UnstructVelArray_V[slot1];
+    tempptr_W = Vel_UnstructVelArray_W[slot1];
+    Vel_UnstructVelArray_U[slot1] = Vel_UnstructVelArray_U[slot2];
+    Vel_UnstructVelArray_V[slot1] = Vel_UnstructVelArray_V[slot2];
+    Vel_UnstructVelArray_W[slot1] = Vel_UnstructVelArray_W[slot2];
+    Vel_UnstructVelArray_U[slot2] = tempptr_U;
+    Vel_UnstructVelArray_V[slot2] = tempptr_V;
+    Vel_UnstructVelArray_W[slot2] = tempptr_W;
+    
+
+    {
+#define VEL_READ_CHUNK_NODES 65536
+        double uvw_buf[VEL_READ_CHUNK_NODES * 3];
+        int remaining = Vel_MeshNumNodes, base = 0, chunk, ci;
+        while(remaining > 0) {
+            chunk = (remaining < VEL_READ_CHUNK_NODES) ? remaining : VEL_READ_CHUNK_NODES;
+            if(fread(uvw_buf, sizeof(double), (size_t)chunk * 3, Data_BinFileID) < (size_t)chunk * 3)
+                FatalError("Could not read UnstructVelArray data from file %s", Data_BinFilePath);
+            for(ci = 0; ci < chunk; ci++) {
+                Vel_UnstructVelArray_U[slot2][base + ci] = uvw_buf[ci * 3    ];
+                Vel_UnstructVelArray_V[slot2][base + ci] = uvw_buf[ci * 3 + 1];
+                Vel_UnstructVelArray_W[slot2][base + ci] = uvw_buf[ci * 3 + 2];
+            }
+            base      += chunk;
+            remaining -= chunk;
+        }
+#undef VEL_READ_CHUNK_NODES
+    }
+    
+    /* Replace no slip condition on surface with inward velocity if Int_NormalFlow is true */
+    if(Int_NormalFlow && Particle_Radius < TINY) {
+        for(i = 0; i < Vel_SurfaceMeshNumNodes; i++) {
+            Vel_UnstructVelArray_U[slot2][Vel_SurfaceMeshNodeIDs[i]] = Int_TimeDirection * Int_NormalFlowScaling * Vel_SurfaceMeshInwardNormals[i][0];
+            Vel_UnstructVelArray_V[slot2][Vel_SurfaceMeshNodeIDs[i]] = Int_TimeDirection * Int_NormalFlowScaling * Vel_SurfaceMeshInwardNormals[i][1];
+            Vel_UnstructVelArray_W[slot2][Vel_SurfaceMeshNodeIDs[i]] = Int_TimeDirection * Int_NormalFlowScaling * Vel_SurfaceMeshInwardNormals[i][2];
+        }
+    }
+    
+    fclose(Data_BinFileID);
+    printf("OK!\n");
+    fflush(stdout);
+    
+}
+
+
+
+void BuildSurfaceNodeInverseMap(void) {
+
+    int n, max_id = -1;
+    if(Vel_SurfaceMeshNumNodes <= 0) return;
+    for(n = 0; n < Vel_SurfaceMeshNumNodes; n++)
+        if(Vel_SurfaceMeshNodeIDs[n] > max_id)
+            max_id = Vel_SurfaceMeshNodeIDs[n];
+    Vel_SurfaceMeshInverseMapSize = max_id + 1;
+    if((Vel_SurfaceMeshInverseMap = (int *)malloc((size_t)Vel_SurfaceMeshInverseMapSize * sizeof(int))) == NULL)
+        FatalError("Malloc failed for Vel_SurfaceMeshInverseMap");
+    for(n = 0; n < Vel_SurfaceMeshInverseMapSize; n++)
+        Vel_SurfaceMeshInverseMap[n] = -1;
+    for(n = 0; n < Vel_SurfaceMeshNumNodes; n++)
+        Vel_SurfaceMeshInverseMap[Vel_SurfaceMeshNodeIDs[n]] = n;
+}
+
+
+int GetLocalIndex_SurfaceMesh(int global_index) {
+
+    if(global_index < 0 || global_index >= Vel_SurfaceMeshInverseMapSize)
+        return -1;
+    return Vel_SurfaceMeshInverseMap[global_index];
+}
+
+void GetVelocity(double tq, LagrangianPoint *pt, double *dXdt) {
+    
+    if(Data_MeshType == CARTESIAN)
+        GetVelocity_Cartesian(tq, pt, dXdt);
+    else if(Data_MeshType == UNSTRUCTURED)
+        GetVelocity_Unstructured(tq, pt, dXdt);
+    else if(Data_MeshType == ANALYTIC)
+        GetVelocity_Analytic(tq, pt, dXdt);
+    else
+        FatalError("Unrecognized value for Data_MeshType in GetVelocity()");
+    
+}
+
+void GetVelocity_Analytic(double tq, LagrangianPoint *pt, double *dXdt) {
+    
+    double A, k, g, rho, xi;
+    
+    A = 0.24;
+    k = 2.0;
+    g = 0.1 * sin(2 * PI * tq);
+    xi = pt->X[0] - g;
+    rho = sqrt(xi * xi + pt->X[1] * pt->X[1]);
+    
+    dXdt[0] = A / K * xi * sin(k * rho) * cos(pt->X[2]);
+    dXdt[1] = A / K * pt->X[1] * sin(k * rho) * cos(pt->X[2]);
+    dXdt[2] = -A * sin(pt->X[2]) * (rho * cos(k * rho) + 2 * sin(k * rho) / k);
+    
+}
+
+void GetVelocity_Cartesian(double tq, LagrangianPoint *pt, double *dXdt) {
+    
+    double xloc, yloc, zloc, tloc;
+    int    i, j, k;
+    double V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16;
+    double f0000, f0001, f0010, f0011, f0100, f0101, f0110, f0111, f1000, f1001, f1010, f1011, f1100, f1101, f1110, f1111;
+    double Xtmp[3];
+    
+    Xtmp[0] = pt->X[0];
+    Xtmp[1] = pt->X[1];
+    Xtmp[2] = pt->X[2];
+    /* check outside domain */
+    if(TestOutsideCartVelDomain(Xtmp)) {
+        if(Data_XPeriodic == VELOCITYPERIODIC)
+            ReMapPt(pt, Xtmp);
+        else {
+            dXdt[0] = 0.0;
+            dXdt[1] = 0.0;
+            dXdt[2] = 0.0;
+            pt->LeftDomain = 1;
+            return;
+        }
+    }
+    
+    /* Set "local" coordinates (relative to space-time voxel) */
+    /* t */
+    tloc = (tq - Data_LoadedTMin) / (Data_LoadedTMax - Data_LoadedTMin);
+    if((tloc > 1 + TINY) || (tloc < 0 - TINY))
+        FatalError("tloc must be between 0 and 1");
+    
+    /* x */
+    i = (int)floor((Xtmp[0] - Vel_CartMesh.XMin) / Vel_CartMesh.XDelta);
+    if(i == (Vel_CartMesh.XRes - 1)) {
+        i = Vel_CartMesh.XRes - 2;
+        xloc = 1.0;
+    }
+    else
+        xloc = (Xtmp[0] - Vel_CartMesh.XMin - i * Vel_CartMesh.XDelta) / Vel_CartMesh.XDelta;
+    
+    /* y */
+    j = (int)floor((Xtmp[1] - Vel_CartMesh.YMin) / Vel_CartMesh.YDelta);
+    if(j == (Vel_CartMesh.YRes - 1)) {
+        j = Vel_CartMesh.YRes - 2;
+        yloc = 1.0;
+    }
+    else
+        yloc = (Xtmp[1] - Vel_CartMesh.YMin - j * Vel_CartMesh.YDelta) / Vel_CartMesh.YDelta;
+    
+    /* z */
+    if(Dimensions == 3) {
+        k = (int)floor((Xtmp[2] - Vel_CartMesh.ZMin) / Vel_CartMesh.ZDelta);
+        if(k == (Vel_CartMesh.ZRes - 1)) {
+            k = Vel_CartMesh.ZRes - 2;
+            zloc = 1.0;
+        }
+        else
+            zloc = (Xtmp[2] - Vel_CartMesh.ZMin - k * Vel_CartMesh.ZDelta) / Vel_CartMesh.ZDelta;
+    }
+    else {
+        k = 0;
+        zloc = 0.0;
+    }
+    
+    /* Linear Interpolation coefficients */
+    V1 = (tloc)*(xloc)*(yloc)*(zloc);
+    V2 = (tloc)*(xloc)*(yloc)*(1-zloc);
+    V3 = (tloc)*(xloc)*(1-yloc)*(zloc);
+    V4 = (tloc)*(xloc)*(1-yloc)*(1-zloc);
+    V5 = (tloc)*(1-xloc)*(yloc)*(zloc);
+    V6 = (tloc)*(1-xloc)*(yloc)*(1-zloc);
+    V7 = (tloc)*(1-xloc)*(1-yloc)*(zloc);
+    V8 = (tloc)*(1-xloc)*(1-yloc)*(1-zloc);
+    V9 = (1-tloc)*(xloc)*(yloc)*(zloc);
+    V10 = (1-tloc)*(xloc)*(yloc)*(1-zloc);
+    V11 = (1-tloc)*(xloc)*(1-yloc)*(zloc);
+    V12 = (1-tloc)*(xloc)*(1-yloc)*(1-zloc);
+    V13 = (1-tloc)*(1-xloc)*(yloc)*(zloc);
+    V14 = (1-tloc)*(1-xloc)*(yloc)*(1-zloc);
+    V15 = (1-tloc)*(1-xloc)*(1-yloc)*(zloc);
+    V16 = (1-tloc)*(1-xloc)*(1-yloc)*(1-zloc);
+    
+    /* Vertices of space-time voxel for U */
+    if(Dimensions == 3) {
+        f0000 = Vel_CartVelArray_U[0][i][j][k];
+        f0001 = Vel_CartVelArray_U[0][i][j][k+1];
+        f0010 = Vel_CartVelArray_U[0][i][j+1][k];
+        f0011 = Vel_CartVelArray_U[0][i][j+1][k+1];
+        f0100 = Vel_CartVelArray_U[0][i+1][j][k];
+        f0101 = Vel_CartVelArray_U[0][i+1][j][k+1];
+        f0110 = Vel_CartVelArray_U[0][i+1][j+1][k];
+        f0111 = Vel_CartVelArray_U[0][i+1][j+1][k+1];
+        f1000 = Vel_CartVelArray_U[1][i][j][k];
+        f1001 = Vel_CartVelArray_U[1][i][j][k+1];
+        f1010 = Vel_CartVelArray_U[1][i][j+1][k];
+        f1011 = Vel_CartVelArray_U[1][i][j+1][k+1];
+        f1100 = Vel_CartVelArray_U[1][i+1][j][k];
+        f1101 = Vel_CartVelArray_U[1][i+1][j][k+1];
+        f1110 = Vel_CartVelArray_U[1][i+1][j+1][k];
+        f1111 = Vel_CartVelArray_U[1][i+1][j+1][k+1];
+    }
+    else {
+        f0000 = Vel_CartVelArray_U[0][i][j][k];
+        f0001 = Vel_CartVelArray_U[0][i][j][k];
+        f0010 = Vel_CartVelArray_U[0][i][j+1][k];
+        f0011 = Vel_CartVelArray_U[0][i][j+1][k];
+        f0100 = Vel_CartVelArray_U[0][i+1][j][k];
+        f0101 = Vel_CartVelArray_U[0][i+1][j][k];
+        f0110 = Vel_CartVelArray_U[0][i+1][j+1][k];
+        f0111 = Vel_CartVelArray_U[0][i+1][j+1][k];
+        f1000 = Vel_CartVelArray_U[1][i][j][k];
+        f1001 = Vel_CartVelArray_U[1][i][j][k];
+        f1010 = Vel_CartVelArray_U[1][i][j+1][k];
+        f1011 = Vel_CartVelArray_U[1][i][j+1][k];
+        f1100 = Vel_CartVelArray_U[1][i+1][j][k];
+        f1101 = Vel_CartVelArray_U[1][i+1][j][k];
+        f1110 = Vel_CartVelArray_U[1][i+1][j+1][k];
+        f1111 = Vel_CartVelArray_U[1][i+1][j+1][k];
+    }
+    
+    /* Linear interpolation for U */
+    dXdt[0] = f0000*V16 + f0001*V15 + f0010*V14 + f0011*V13 + f0100*V12 + f0101*V11 + f0110*V10
+    + f0111*V9 + f1000*V8 + f1001*V7 + f1010*V6 + f1011*V5 + f1100*V4 + f1101*V3 + f1110*V2 + f1111*V1;
+    
+    /* Vertices of space-time voxel for V */
+    if(Dimensions == 3) {
+        f0000 = Vel_CartVelArray_V[0][i][j][k];
+        f0001 = Vel_CartVelArray_V[0][i][j][k+1];
+        f0010 = Vel_CartVelArray_V[0][i][j+1][k];
+        f0011 = Vel_CartVelArray_V[0][i][j+1][k+1];
+        f0100 = Vel_CartVelArray_V[0][i+1][j][k];
+        f0101 = Vel_CartVelArray_V[0][i+1][j][k+1];
+        f0110 = Vel_CartVelArray_V[0][i+1][j+1][k];
+        f0111 = Vel_CartVelArray_V[0][i+1][j+1][k+1];
+        f1000 = Vel_CartVelArray_V[1][i][j][k];
+        f1001 = Vel_CartVelArray_V[1][i][j][k+1];
+        f1010 = Vel_CartVelArray_V[1][i][j+1][k];
+        f1011 = Vel_CartVelArray_V[1][i][j+1][k+1];
+        f1100 = Vel_CartVelArray_V[1][i+1][j][k];
+        f1101 = Vel_CartVelArray_V[1][i+1][j][k+1];
+        f1110 = Vel_CartVelArray_V[1][i+1][j+1][k];
+        f1111 = Vel_CartVelArray_V[1][i+1][j+1][k+1];
+    }
+    else {
+        f0000 = Vel_CartVelArray_V[0][i][j][k];
+        f0001 = Vel_CartVelArray_V[0][i][j][k];
+        f0010 = Vel_CartVelArray_V[0][i][j+1][k];
+        f0011 = Vel_CartVelArray_V[0][i][j+1][k];
+        f0100 = Vel_CartVelArray_V[0][i+1][j][k];
+        f0101 = Vel_CartVelArray_V[0][i+1][j][k];
+        f0110 = Vel_CartVelArray_V[0][i+1][j+1][k];
+        f0111 = Vel_CartVelArray_V[0][i+1][j+1][k];
+        f1000 = Vel_CartVelArray_V[1][i][j][k];
+        f1001 = Vel_CartVelArray_V[1][i][j][k];
+        f1010 = Vel_CartVelArray_V[1][i][j+1][k];
+        f1011 = Vel_CartVelArray_V[1][i][j+1][k];
+        f1100 = Vel_CartVelArray_V[1][i+1][j][k];
+        f1101 = Vel_CartVelArray_V[1][i+1][j][k];
+        f1110 = Vel_CartVelArray_V[1][i+1][j+1][k];
+        f1111 = Vel_CartVelArray_V[1][i+1][j+1][k];
+    }
+    
+    /* Linear interpolation for V */
+    dXdt[1] = f0000*V16 + f0001*V15 + f0010*V14 + f0011*V13 + f0100*V12 + f0101*V11 + f0110*V10
+    + f0111*V9 + f1000*V8 + f1001*V7 + f1010*V6 + f1011*V5 + f1100*V4 + f1101*V3 + f1110*V2 + f1111*V1;
+    
+    /* Vertices of space-time voxel for W */
+    if(Dimensions == 3) {
+        f0000 = Vel_CartVelArray_W[0][i][j][k];
+        f0001 = Vel_CartVelArray_W[0][i][j][k+1];
+        f0010 = Vel_CartVelArray_W[0][i][j+1][k];
+        f0011 = Vel_CartVelArray_W[0][i][j+1][k+1];
+        f0100 = Vel_CartVelArray_W[0][i+1][j][k];
+        f0101 = Vel_CartVelArray_W[0][i+1][j][k+1];
+        f0110 = Vel_CartVelArray_W[0][i+1][j+1][k];
+        f0111 = Vel_CartVelArray_W[0][i+1][j+1][k+1];
+        f1000 = Vel_CartVelArray_W[1][i][j][k];
+        f1001 = Vel_CartVelArray_W[1][i][j][k+1];
+        f1010 = Vel_CartVelArray_W[1][i][j+1][k];
+        f1011 = Vel_CartVelArray_W[1][i][j+1][k+1];
+        f1100 = Vel_CartVelArray_W[1][i+1][j][k];
+        f1101 = Vel_CartVelArray_W[1][i+1][j][k+1];
+        f1110 = Vel_CartVelArray_W[1][i+1][j+1][k];
+        f1111 = Vel_CartVelArray_W[1][i+1][j+1][k+1];
+    }
+    else {
+        f0000 = Vel_CartVelArray_W[0][i][j][k];
+        f0001 = Vel_CartVelArray_W[0][i][j][k];
+        f0010 = Vel_CartVelArray_W[0][i][j+1][k];
+        f0011 = Vel_CartVelArray_W[0][i][j+1][k];
+        f0100 = Vel_CartVelArray_W[0][i+1][j][k];
+        f0101 = Vel_CartVelArray_W[0][i+1][j][k];
+        f0110 = Vel_CartVelArray_W[0][i+1][j+1][k];
+        f0111 = Vel_CartVelArray_W[0][i+1][j+1][k];
+        f1000 = Vel_CartVelArray_W[1][i][j][k];
+        f1001 = Vel_CartVelArray_W[1][i][j][k];
+        f1010 = Vel_CartVelArray_W[1][i][j+1][k];
+        f1011 = Vel_CartVelArray_W[1][i][j+1][k];
+        f1100 = Vel_CartVelArray_W[1][i+1][j][k];
+        f1101 = Vel_CartVelArray_W[1][i+1][j][k];
+        f1110 = Vel_CartVelArray_W[1][i+1][j+1][k];
+        f1111 = Vel_CartVelArray_W[1][i+1][j+1][k];
+    }
+    
+    /* Linear interpolation for W */
+    dXdt[2] = f0000*V16 + f0001*V15 + f0010*V14 + f0011*V13 + f0100*V12 + f0101*V11 + f0110*V10
+    + f0111*V9 + f1000*V8 + f1001*V7 + f1010*V6 + f1011*V5 + f1100*V4 + f1101*V3 + f1110*V2 + f1111*V1;
+    
+}
+
+void GetVelocity_Unstructured(const double tq, LagrangianPoint *pt, double *dXdt) {
+    
+    double x, y, z, x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3;
+    double a11, a12, a13, a21, a22, a23, a31, a32, a33;
+    double U1t, U2t, U3t, U4t, V1t, V2t, V3t, V4t, W1t, W2t, W3t, W4t;
+    double r, s, t, d;
+    double V;
+    double tloc;
+    
+    if(pt->ElementIndex == -1)
+        FatalError("Attempting to interpolate velocity at point with Element_Index = -1");
+    
+    x = pt->X[0];
+    y = pt->X[1];
+    z = pt->X[2];
+    
+    /* Set tloc defining where in between loaded data to interpolate in time */
+    tloc = (tq - Data_LoadedTMin) / (Data_LoadedTMax - Data_LoadedTMin);
+    if((tloc > 1 + TINY) || (tloc < 0 - TINY))
+        FatalError("tloc = %f and must be between 0 and 1", tloc);
+    
+    while(1) {
+        /* Locate the point in the velocity mesh */
+        if(Dimensions == 3) {
+            /* Physical coordinates of nodes of the test element */
+            x0 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[0]][0];
+            y0 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[0]][1];
+            z0 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[0]][2];
+            x1 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[1]][0];
+            y1 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[1]][1];
+            z1 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[1]][2];
+            x2 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[2]][0];
+            y2 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[2]][1];
+            z2 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[2]][2];
+            x3 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[3]][0];
+            y3 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[3]][1];
+            z3 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[3]][2];
+            
+            /* Entries for mapping of physical to natural coordinates of test element */
+            a11 = (z3 - z0) * (y2 - y3) - (z2 - z3) * (y3 - y0);
+            a21 = (z3 - z0) * (y0 - y1) - (z0 - z1) * (y3 - y0);
+            a31 = (z1 - z2) * (y0 - y1) - (z0 - z1) * (y1 - y2);
+            a12 = (x3 - x0) * (z2 - z3) - (x2 - x3) * (z3 - z0);
+            a22 = (x3 - x0) * (z0 - z1) - (x0 - x1) * (z3 - z0);
+            a32 = (x1 - x2) * (z0 - z1) - (x0 - x1) * (z1 - z2);
+            a13 = (y3 - y0) * (x2 - x3) - (y2 - y3) * (x3 - x0);
+            a23 = (y3 - y0) * (x0 - x1) - (y0 - y1) * (x3 - x0);
+            a33 = (y1 - y2) * (x0 - x1) - (y0 - y1) * (x1 - x2);
+            
+            /* Determinant of mapping from natural to physical coordinates of test element */
+            V = (x1 - x0) * ((y2 - y0) * (z3 - z0) - (z2 - z0) * (y3 - y0)) +
+            (x2 - x0) * ((y0 - y1) * (z3 - z0) - (z0 - z1) * (y3 - y0)) +
+            (x3 - x0) * ((y1 - y0) * (z2 - z0) - (z1 - z0) * (y2 - y0));
+            
+            /* Natural coordinates of point to be interpolated */
+            r = (a11 * (x - x0) + a12 * (y - y0) + a13 * (z - z0)) / V;
+            s = (a21 * (x - x0) + a22 * (y - y0) + a23 * (z - z0)) / V;
+            t = (a31 * (x - x0) + a32 * (y - y0) + a33 * (z - z0)) / V;
+            
+            d = fmin(r, fmin(s, fmin(t, 1 - r - s - t)));
+        }
+        else { /* Dimensions == 2 */
+            /* Physical coordinates of nodes of the test element */
+            x0 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[0]][0];
+            y0 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[0]][1];
+            x1 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[1]][0];
+            y1 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[1]][1];
+            x2 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[2]][0];
+            y2 = Vel_MeshNodeArray[Vel_MeshElementArray[pt->ElementIndex].Nodes[2]][1];
+            
+            /* Entries for mapping of physical to natural coordinates of test element */
+            a11 = y2 - y0;
+            a12 = x0 - x2;
+            a21 = y0 - y1;
+            a22 = x1 - x0;
+            
+            /* Determinant of mapping from natural to physical coordinates of test element */
+            V = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+            
+            /* Natural coordinates of point to be interpolated */
+            r = (a11 * (x - x0) + a12 * (y - y0)) / V;
+            s = (a21 * (x - x0) + a22 * (y - y0)) / V;
+            t = 0;
+            
+            d = fmin(r, fmin(s, 1 - r - s));
+        }
+        
+        if((d + TINY) >= 0) {   /* Point inside test element */
+            /* Interpolate velocity at nodes in time */
+            U1t = (1 - tloc) * Vel_UnstructVelArray_U[0][Vel_MeshElementArray[pt->ElementIndex].Nodes[0]] +
+            tloc * Vel_UnstructVelArray_U[1][Vel_MeshElementArray[pt->ElementIndex].Nodes[0]];
+            V1t = (1 - tloc) * Vel_UnstructVelArray_V[0][Vel_MeshElementArray[pt->ElementIndex].Nodes[0]] +
+            tloc * Vel_UnstructVelArray_V[1][Vel_MeshElementArray[pt->ElementIndex].Nodes[0]];
+            U2t = (1 - tloc) * Vel_UnstructVelArray_U[0][Vel_MeshElementArray[pt->ElementIndex].Nodes[1]] +
+            tloc * Vel_UnstructVelArray_U[1][Vel_MeshElementArray[pt->ElementIndex].Nodes[1]];
+            V2t = (1 - tloc) * Vel_UnstructVelArray_V[0][Vel_MeshElementArray[pt->ElementIndex].Nodes[1]] +
+            tloc * Vel_UnstructVelArray_V[1][Vel_MeshElementArray[pt->ElementIndex].Nodes[1]];
+            U3t = (1 - tloc) * Vel_UnstructVelArray_U[0][Vel_MeshElementArray[pt->ElementIndex].Nodes[2]] +
+            tloc * Vel_UnstructVelArray_U[1][Vel_MeshElementArray[pt->ElementIndex].Nodes[2]];
+            V3t = (1 - tloc) * Vel_UnstructVelArray_V[0][Vel_MeshElementArray[pt->ElementIndex].Nodes[2]] +
+            tloc * Vel_UnstructVelArray_V[1][Vel_MeshElementArray[pt->ElementIndex].Nodes[2]];
+            if(Dimensions == 3) {
+                W1t = (1 - tloc) * Vel_UnstructVelArray_W[0][Vel_MeshElementArray[pt->ElementIndex].Nodes[0]] +
+                tloc * Vel_UnstructVelArray_W[1][Vel_MeshElementArray[pt->ElementIndex].Nodes[0]];
+                W2t = (1 - tloc) * Vel_UnstructVelArray_W[0][Vel_MeshElementArray[pt->ElementIndex].Nodes[1]] +
+                tloc * Vel_UnstructVelArray_W[1][Vel_MeshElementArray[pt->ElementIndex].Nodes[1]];
+                W3t = (1 - tloc) * Vel_UnstructVelArray_W[0][Vel_MeshElementArray[pt->ElementIndex].Nodes[2]] +
+                tloc * Vel_UnstructVelArray_W[1][Vel_MeshElementArray[pt->ElementIndex].Nodes[2]];
+                U4t = (1 - tloc) * Vel_UnstructVelArray_U[0][Vel_MeshElementArray[pt->ElementIndex].Nodes[3]] +
+                tloc * Vel_UnstructVelArray_U[1][Vel_MeshElementArray[pt->ElementIndex].Nodes[3]];
+                V4t = (1 - tloc) * Vel_UnstructVelArray_V[0][Vel_MeshElementArray[pt->ElementIndex].Nodes[3]] +
+                tloc * Vel_UnstructVelArray_V[1][Vel_MeshElementArray[pt->ElementIndex].Nodes[3]];
+                W4t = (1 - tloc) * Vel_UnstructVelArray_W[0][Vel_MeshElementArray[pt->ElementIndex].Nodes[3]] +
+                tloc * Vel_UnstructVelArray_W[1][Vel_MeshElementArray[pt->ElementIndex].Nodes[3]];
+                
+                /* Get interpolate velocity at point in space using time-interpolated velocity at nodes*/
+                dXdt[0] = U1t + (U2t - U1t) * fabs(r) + (U3t - U1t) * fabs(s) + (U4t - U1t) * fabs(t);
+                dXdt[1] = V1t + (V2t - V1t) * fabs(r) + (V3t - V1t) * fabs(s) + (V4t - V1t) * fabs(t);
+                dXdt[2] = W1t + (W2t - W1t) * fabs(r) + (W3t - W1t) * fabs(s) + (W4t - W1t) * fabs(t);
+            }
+            else { /* Dimensions = 2 */
+                /* Get interpolate velocity at point in space using time-interpolated velocity at nodes*/
+                dXdt[0] = U1t + (U2t - U1t) * fabs(r) + (U3t - U1t) * fabs(s);
+                dXdt[1] = V1t + (V2t - V1t) * fabs(r) + (V3t - V1t) * fabs(s);
+                dXdt[2] = 0.0;
+            }
+            return;
+        }
+        else { /* Point not inside test element */
+            /* Reset test element to one of neighbors */
+            if(Dimensions == 3) {
+                if(fabs(r - d) < TINY)
+                    pt->ElementIndex = Vel_MeshElementArray[pt->ElementIndex].NeighborIndex[0];
+                else if(fabs(s - d)  < TINY)
+                    pt->ElementIndex = Vel_MeshElementArray[pt->ElementIndex].NeighborIndex[1];
+                else if(fabs(t - d) < TINY)
+                    pt->ElementIndex = Vel_MeshElementArray[pt->ElementIndex].NeighborIndex[2];
+                else if(fabs((1 - r - s - t) - d) < TINY)
+                    pt->ElementIndex = Vel_MeshElementArray[pt->ElementIndex].NeighborIndex[3];
+                else
+                    FatalError("Indeterminate neighbor in function GetVelocity_Unstructured()");
+            }
+            else {
+                if(fabs(r - d) < TINY)
+                    pt->ElementIndex = Vel_MeshElementArray[pt->ElementIndex].NeighborIndex[0];
+                else if(fabs(s - d) < TINY)
+                    pt->ElementIndex = Vel_MeshElementArray[pt->ElementIndex].NeighborIndex[1];
+                else if(fabs(d - (1 - r - s)) < TINY)
+                    pt->ElementIndex = Vel_MeshElementArray[pt->ElementIndex].NeighborIndex[2];
+                else
+                    FatalError("Indeterminate neighbor in function GetVelocity_Unstructured()");
+            }
+            /* If point has left domain, flag it and return with velocity set to zero */
+            if(pt->ElementIndex == -1) {
+                pt->LeftDomain = 1;
+                dXdt[0] = 0.0;
+                dXdt[1] = 0.0;
+                dXdt[2] = 0.0;
+                return;
+            }
+        }
+    }
+    
+}
+
+
+
+int TestOutsideCartVelDomain(double X[3]) {
+    /***
+     inside data bounding box --> return 0
+     outside data bounding box --> return 1
+     ***/
+
+    if(X[0] < Vel_CartMesh.XMin || X[0] > Vel_CartMesh.XMax ||
+       X[1] < Vel_CartMesh.YMin || X[1] > Vel_CartMesh.YMax)
+        return 1;
+    if(Dimensions == 3 && (X[2] < Vel_CartMesh.ZMin || X[2] > Vel_CartMesh.ZMax))
+        return 1;
+    return 0;
+}
+
+
+int TestOutsideDomain(double point[3]) {
+    /***
+     inside data bounding box --> return 0
+     outside data bounding box --> return 1
+     ***/
+    
+    if(point[0] < (Data_MeshBounds.XMin - TINY) || point[0] > (Data_MeshBounds.XMax + TINY))
+        return(1);
+    else if(point[1] < (Data_MeshBounds.YMin - TINY) || point[1] > (Data_MeshBounds.YMax + TINY))
+        return(1);
+    else if(point[2] < (Data_MeshBounds.ZMin - TINY) || point[2] > (Data_MeshBounds.ZMax + TINY))
+        return(1);
+    else
+        return(0);
+    
+}
+
+void ReMapPt(LagrangianPoint *pt, double *newpt) {
+    
+    if(pt->X[0] < Vel_CartMesh.XMin)
+        newpt[0] = pt->X[0] + (Vel_CartMesh.XMax - Vel_CartMesh.XMin);
+    else if(pt->X[0] > Vel_CartMesh.XMax)
+        newpt[0] = pt->X[0] - (Vel_CartMesh.XMax - Vel_CartMesh.XMin);
+    if(pt->X[1] < Vel_CartMesh.YMin)
+        newpt[1] = pt->X[1] + (Vel_CartMesh.YMax - Vel_CartMesh.YMin);
+    else if(pt->X[1] > Vel_CartMesh.YMax)
+        newpt[1] = pt->X[1] - (Vel_CartMesh.YMax - Vel_CartMesh.YMin);
+    if(pt->X[2] < Vel_CartMesh.ZMin)
+        newpt[2] = pt->X[2] + (Vel_CartMesh.ZMax - Vel_CartMesh.ZMin);
+    else if(pt->X[2] > Vel_CartMesh.ZMax)
+        newpt[2] = pt->X[2] - (Vel_CartMesh.ZMax - Vel_CartMesh.ZMin);
+    
+}
