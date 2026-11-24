@@ -153,8 +153,7 @@ void LoadCartVelDataFrame(int frame) {
     
 }
 
-/* CHANGE:
- * Node velocities are fread in chunks of 65536 nodes (~1.5 MB) instead of
+/* Node velocities are fread in chunks of 65536 nodes (~1.5 MB) instead of
  * one (U,V,W) triple per call.
  */
 void LoadUnstructVelDataFrame(int frame) {

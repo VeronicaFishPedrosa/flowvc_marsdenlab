@@ -40,12 +40,12 @@ static double *FTLE_StepExitTime = NULL;
 static double *FTLE_StepV = NULL;
 static int *FTLE_StepElem = NULL;
 
-/* CHANGE: flatten (i,j,k) for Phase-1 scratch arrays. */
+/* Flatten (i,j,k) for Phase-1 scratch arrays. */
 static size_t FTLE_FlatIndex(int i, int j, int k) {
 	return ((size_t)k * (size_t)FTLE_CartMesh.YRes + (size_t)j) * (size_t)FTLE_CartMesh.XRes + (size_t)i;
 }
 
-/* CHANGE: allocate one in-memory FTLE slide grid
+/* Allocate one in-memory FTLE slide grid
  * (replaces writing Path_Data/<prefix>.<ss>.bin at init). */
 static FTLEPoint ***AllocFTLEPointGrid(void) {
 	int i, j;
@@ -70,7 +70,7 @@ static void CopyFTLEPointGrid(FTLEPoint ***dst, FTLEPoint ***src) {
 			memcpy(dst[i][j], src[i][j], (size_t)FTLE_CartMesh.ZRes * sizeof(FTLEPoint));
 }
 
-/* CHANGE: free one in-memory slide grid. */
+/* Free one in-memory slide grid. */
 static void FreeFTLEPointGrid(FTLEPoint ***grid) {
 	int i, j;
 	if(grid == NULL)
@@ -881,7 +881,7 @@ LagrangianPoint Advect_FTLEPoint(int i, int j, int k, double t1, double t2) {
 		TempPoint.V[2] = FTLE_MeshPt[i][j][k].Pt.V[2];
 	}
 
-	/* CHANGE: If the neighbor is already gone (exited earlier
+	/* If the neighbor is already gone (exited earlier
  	 * in this window, or identified as as exterior at IC), return that recorded exit
  	 * time instead of calling Advect() to prevent crashing */
 	
@@ -895,7 +895,7 @@ LagrangianPoint Advect_FTLEPoint(int i, int j, int k, double t1, double t2) {
 	
 }
 
-/* CHANGE: Two-phase OpenMP advection: Phase 1 integrates in parallel into scratch;
+/* Two-phase OpenMP advection: Phase 1 integrates in parallel into scratch;
  * Phase 2 commits V/ElementIndex and early-exit FTLE in original (k,j,i)
  * scan order so boundary FTLE stays bit-identical
  */
@@ -1090,7 +1090,7 @@ void OutputFTLE(int ss, double IntT) {
 		FTLE_NumOutput++; 
 }
 
-/* CHANGE: free the in-memory slide grids (FTLE_Slides) and Phase-1 scratch
+/* Free the in-memory slide grids (FTLE_Slides) and Phase-1 scratch
  * (FTLE_Step*) */
 void FreeFTLEData(void) {
 	

@@ -141,8 +141,7 @@ void LoadCartVorticityDataFrame(int frame) {
 }
 
 
-/* CHANGE:
- * Vorticity is fread in chunks of 65536 elements instead of one (wx,wy,wz)
+/* Vorticity is fread in chunks of 65536 elements instead of one (wx,wy,wz)
  * triple per call.
  */
 void LoadUnstructVorticityDataFrame(int frame) {

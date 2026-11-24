@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
-/* CHANGE FROM ORIGINAL SHADDEN flowVC: omp.h for the atomic CET updates below. */
+/* omp.h for the atomic CET updates below. */
 #ifdef _OPENMP
 #include <omp.h>
 #endif

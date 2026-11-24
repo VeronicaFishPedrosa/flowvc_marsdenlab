@@ -194,7 +194,7 @@ int main (int argc, const char * argv[]) {
                 if(FTLE_Launches[ss].Status != COMPLETE &&
                    (FTLE_Launches[ss].Status == LAUNCHED ||
                     (FTLE_Launches[ss].StartTime <= Data_LoadedTMax + TINY && FTLE_Launches[ss].StartTime >= Data_LoadedTMin - TINY))) {
-                       ReadInFTLELaunch(ss); /* CHANGE FROM ORIGINAL: select in-memory slide; original fread Path_Data bin */
+                       ReadInFTLELaunch(ss); /* select in-memory slide; original fread Path_Data bin */
                        /* Initialize slide if it hasn't been launched yet and set integration bounds */
                        if(FTLE_Launches[ss].Status == UNLAUNCHED) {
                            FTLE_Launches[ss].Status = LAUNCHED;
@@ -226,7 +226,7 @@ int main (int argc, const char * argv[]) {
                        fflush(stdout);
                        num_integrated = AdvectFTLEInterval(ss, t1, t2);
                        UpdateFTLELocations(); /* Update position of points still in domain, i.e. copy FTLE_NewArray values to FTLE_MeshPt */
-                       WriteOutFTLELaunch(ss); /* CHANGE FROM ORIGINAL: no-op; original fwrite Path_Data bin */
+                       WriteOutFTLELaunch(ss); /* no-op; original fwrite Path_Data bin */
                        printf(" %d points integrated.\n", num_integrated);
                        fflush(stdout);
                        

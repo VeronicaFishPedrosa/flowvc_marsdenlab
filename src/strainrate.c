@@ -60,8 +60,7 @@ void LoadStrainRateDataFrame(int frame) {
         FatalError("Unknown value for Data_MeshType in LoadStrainRateDataFrame()");
 }
 
-/* CHANGE:
- * Slot advance is an O(1) pointer swap instead of copying every (i,j) row.
+/* Slot advance is an O(1) pointer swap instead of copying every (i,j) row.
  * File I/O reads one row per fread instead of one double at a time.
  * Values are unchanged. */
 void LoadCartStrainRateDataFrame(int frame) {
