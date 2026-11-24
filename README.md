@@ -72,7 +72,7 @@ python scripts/merge_ftle_batches.py ~/flowvc_run/output batch0/ batch1/ batch2/
     --prefix forwardFTLE --t-first <first Output_TStart> --t-delta <Output_TDelta> --num-slides <total>
 ```
 
-What's different from the original flowVC:
+## What's different from the original flowVC:
 
 **Faster on 8 threads** (FTLE advection is parallelized with OpenMP). On a grid with 13.9M points, results were identical to the original:
 
