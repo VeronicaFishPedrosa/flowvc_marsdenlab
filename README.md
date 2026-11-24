@@ -74,8 +74,16 @@ python scripts/merge_ftle_batches.py ~/flowvc_run/output batch0/ batch1/ batch2/
 
 What's different from the original flowVC:
 
-- **It is about 2x faster** on 8 threads; FTLE advection runs in parallel with OpenMP.
+**Faster on 8 threads** (FTLE advection is parallelized with OpenMP). On a grid with 13.9M points, results were identical to the original:
+
+
+|             | Direction | Original | This build | Speedup | Check          |
+| ----------- | --------- | -------- | ---------- | ------- | -------------- |
+| (13.9M pts) | Forward   | 23:35    | 6:40       | 3.5x    | byte-identical |
+| (13.9M pts) | Backward  | 18:16    | 6:45       | 2.7x    | byte-identical |
+
+
 - **Velocity frames no longer wrap around on non-periodic data.** The original
-reused frame 0 when it needed the frame after the last one. 
+reused frame 0 when it needed the frame after the last one.
 - **A few crashes and wrong-frame bugs are fixed.**
 
